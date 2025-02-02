@@ -7,12 +7,13 @@ import (
 	"crypto/sha512"
 	"crypto/hmac"
 	"encoding/hex"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"strings"
 	"sync"
+	"time"
+	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/crypto/md4"
@@ -89,6 +90,9 @@ func crackHash(hash, algo, wordlistPath string) {
 	var wg sync.WaitGroup
 	found := make(chan string, 1) // Channel to signal when a match is found
 
+	color.Cyan("[+] Starting hash cracking...")
+	tStart := time.Now()
+
 	for _, word := range words {
 		wg.Add(1)
 		go func(w string) {
@@ -108,16 +112,19 @@ func crackHash(hash, algo, wordlistPath string) {
 
 	// Check for results
 	if result, ok := <-found; ok {
-		fmt.Printf("[+] Found: %s\n", result)
+		color.Green("[✔] Hash cracked: %s", result)
 	} else {
-		fmt.Println("[-] No match found")
+		color.Red("[-] No match found")
 	}
+
+	tElapsed := time.Since(tStart)
+	color.Yellow("[*] Cracking completed in %s", tElapsed)
 }
 
 func main() {
 	if len(os.Args) != 4 {
-		fmt.Println("Usage: go run gocrackit.go <hash> <algorithm> <wordlist>")
-		fmt.Println("Supported algorithms: md5, sha1, sha256, sha512, bcrypt, scrypt, hmac-sha256, ntlm, sha512-crypt, argon2id, pbkdf2-sha256, pbkdf2-sha512")
+		color.Red("Usage: go run gocrackit.go <hash> <algorithm> <wordlist>")
+		color.Yellow("Supported algorithms: md5, sha1, sha256, sha512, bcrypt, scrypt, hmac-sha256, ntlm, sha512-crypt, argon2id, pbkdf2-sha256, pbkdf2-sha512")
 		os.Exit(1)
 	}
 
