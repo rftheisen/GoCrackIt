@@ -70,6 +70,8 @@ letmein
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
+## TODO
+- Add GPU acceleration (start with CUDA)
 ## License
 MIT License
 
