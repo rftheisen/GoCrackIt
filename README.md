@@ -1,6 +1,6 @@
 # gocrackit
 
-gocrackit is a powerful and multithreaded hash cracking tool written in Go. It supports multiple hashing algorithms and uses dictionary-based attacks to crack hashes efficiently.
+gocrackit is a powerful and multithreaded hash cracking tool written in Go. It supports multiple hashing algorithms and dictionary-based attacks to crack hashes efficiently. This is to be used for learning and research purposes only.
 
 ## Features
 - Supports various hashing algorithms:
