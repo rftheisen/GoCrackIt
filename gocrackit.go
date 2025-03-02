@@ -1,5 +1,13 @@
 package main
 
+/*
+#cgo CFLAGS: -I/usr/include
+#cgo LDFLAGS: -lOpenCL
+#include <CL/cl.h>
+#include <stdlib.h>
+*/
+import "C"
+
 import (
 	"crypto/md5"
 	"crypto/sha1"
@@ -14,92 +22,81 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
-	"github.com/mattn/go-opencl"
 )
 
-// OpenCL Kernel for GPU-based hashing
-const openCLKernel = `
-__kernel void hash_md5(__global char* passwords, __global char* hashes, int count) {
-    int id = get_global_id(0);
-    if (id < count) {
-        char hash[16];
-        md5(passwords[id], hash);
-        if (memcmp(hash, hashes, 16) == 0) {
-            // Password matched, return result
-        }
-    }
-}`
-
-// GPU-accelerated hash function using OpenCL
+// GPU-accelerated hash function using OpenCL with CGO
 func hashWithGPU(wordlist []string, targetHash string, algo string) string {
-	platforms, err := opencl.GetPlatforms()
-	if err != nil || len(platforms) == 0 {
-		log.Fatal("No OpenCL platforms found")
+	var platform C.cl_platform_id
+	var device C.cl_device_id
+	var context C.cl_context
+	var queue C.cl_command_queue
+	var program C.cl_program
+	var kernel C.cl_kernel
+	var err C.cl_int
+
+	// Get Platform
+	err = C.clGetPlatformIDs(1, &platform, nil)
+	if err != C.CL_SUCCESS {
+		log.Fatal("Failed to get OpenCL platform")
 	}
 
-	// Select the first available platform
-	platform := platforms[0]
-	devices, err := platform.GetDevices(opencl.DeviceTypeGPU)
-	if err != nil || len(devices) == 0 {
-		log.Fatal("No OpenCL GPU devices found")
+	// Get Device
+	err = C.clGetDeviceIDs(platform, C.CL_DEVICE_TYPE_GPU, 1, &device, nil)
+	if err != C.CL_SUCCESS {
+		log.Fatal("Failed to get OpenCL device")
 	}
 
-	device := devices[0]
-	context, err := opencl.CreateContext([]*opencl.Device{device})
-	if err != nil {
+	// Create Context
+	context = C.clCreateContext(nil, 1, &device, nil, nil, &err)
+	if err != C.CL_SUCCESS {
 		log.Fatal("Failed to create OpenCL context")
 	}
-	source := openCLKernel
-	program, err := context.CreateProgramWithSource([]string{source})
-	if err != nil {
-		log.Fatal("Failed to create OpenCL program")
-	}
 
-	if err := program.Build(); err != nil {
-		log.Fatal("Failed to build OpenCL program")
-	}
-
-	// Execute kernel
-	queue, err := context.CreateCommandQueue(device)
-	if err != nil {
+	// Create Command Queue
+	queue = C.clCreateCommandQueue(context, device, 0, &err)
+	if err != C.CL_SUCCESS {
 		log.Fatal("Failed to create command queue")
 	}
 
-	kernel, err := program.CreateKernel("hash_md5")
-	if err != nil {
+	// OpenCL kernel source code
+	source := `
+	__kernel void hash_md5(__global char* passwords, __global char* hashes, int count) {
+	    int id = get_global_id(0);
+	    if (id < count) {
+	        char hash[16];
+	        md5(passwords[id], hash);
+	        if (memcmp(hash, hashes, 16) == 0) {
+	            // Password matched
+	        }
+	    }
+	}`
+
+	sourceStr := C.CString(source)
+	defer C.free(unsafe.Pointer(sourceStr))
+
+	program = C.clCreateProgramWithSource(context, 1, &sourceStr, nil, &err)
+	if err != C.CL_SUCCESS {
+		log.Fatal("Failed to create OpenCL program")
+	}
+
+	err = C.clBuildProgram(program, 1, &device, nil, nil, nil)
+	if err != C.CL_SUCCESS {
+		log.Fatal("Failed to build OpenCL program")
+	}
+
+	kernel = C.clCreateKernel(program, C.CString("hash_md5"), &err)
+	if err != C.CL_SUCCESS {
 		log.Fatal("Failed to create kernel")
 	}
 
-	// Load wordlist into GPU memory
-	wordlistBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(wordlist)*64, nil) // Max word length assumed to be 64
-	if err != nil {
-		log.Fatal("Failed to create buffer for wordlist")
-	}
-	targetBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(targetHash), nil)
-	if err != nil {
-		log.Fatal("Failed to create buffer for target hash")
-	}
+	// GPU processing logic goes here (memory allocation, execution, etc.)
+	log.Println("[+] OpenCL kernel compiled successfully, but further implementation needed for full GPU acceleration.")
 
-	// Copy data to GPU
-	queue.EnqueueWriteBuffer(wordlistBuffer, true, 0, len(wordlist)*64, wordlist, nil, nil)
-	queue.EnqueueWriteBuffer(targetBuffer, true, 0, len(targetHash), []byte(targetHash), nil, nil)
-
-	kernel.SetArgBuffer(0, wordlistBuffer)
-	kernel.SetArgBuffer(1, targetBuffer)
-	kernel.SetArgInt32(2, int32(len(wordlist)))
-
-	// Run kernel
-	queue.EnqueueNDRangeKernel(kernel, nil, []int{len(wordlist)}, nil, nil)
-	queue.Finish()
-
-	// Read back result
-	results := make([]byte, 64)
-	queue.EnqueueReadBuffer(targetBuffer, true, 0, 64, results, nil, nil)
-
-	return string(results)
+	return ""
 }
 
 // crackHash attempts to find the plaintext using CPU or GPU
