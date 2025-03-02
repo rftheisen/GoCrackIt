@@ -17,7 +17,7 @@ import (
 	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
-	"github.com/jgillich/go-opencl"
+	"github.com/go-opencl/cl"
 )
 
 // OpenCL Kernel for GPU-based hashing
@@ -35,20 +35,20 @@ __kernel void hash_md5(__global char* passwords, __global char* hashes, int coun
 
 // GPU-accelerated hash function using OpenCL
 func hashWithGPU(wordlist []string, targetHash string, algo string) string {
-	platforms, err := opencl.GetPlatforms()
+	platforms, err := cl.GetPlatforms()
 	if err != nil || len(platforms) == 0 {
 		log.Fatal("No OpenCL platforms found")
 	}
 
 	// Select the first available platform
 	platform := platforms[0]
-	devices, err := platform.GetDevices(opencl.DeviceTypeGPU)
+	devices, err := platform.GetDevices(cl.DeviceTypeGPU)
 	if err != nil || len(devices) == 0 {
 		log.Fatal("No OpenCL GPU devices found")
 	}
 
 	device := devices[0]
-	context, err := opencl.CreateContext([]*opencl.Device{device})
+	context, err := cl.CreateContext([]*cl.Device{device})
 	if err != nil {
 		log.Fatal("Failed to create OpenCL context")
 	}
@@ -63,7 +63,7 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	}
 
 	// Execute kernel
-	queue, err := context.CreateCommandQueue(device)
+	queue, err := context.CreateCommandQueue(device, nil)
 	if err != nil {
 		log.Fatal("Failed to create command queue")
 	}
@@ -74,30 +74,30 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	}
 
 	// Load wordlist into GPU memory
-	wordlistBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(wordlist)*64) // Max word length assumed to be 64
+	wordlistBuffer, err := context.CreateBuffer(cl.MemReadOnly, len(wordlist)*64, nil) // Max word length assumed to be 64
 	if err != nil {
 		log.Fatal("Failed to create buffer for wordlist")
 	}
-	targetBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(targetHash))
+	targetBuffer, err := context.CreateBuffer(cl.MemReadOnly, len(targetHash), nil)
 	if err != nil {
 		log.Fatal("Failed to create buffer for target hash")
 	}
 
 	// Copy data to GPU
-	queue.EnqueueWriteBuffer(wordlistBuffer, wordlist)
-	queue.EnqueueWriteBuffer(targetBuffer, []byte(targetHash))
+	queue.EnqueueWriteBuffer(wordlistBuffer, true, 0, len(wordlist)*64, wordlist, nil, nil)
+	queue.EnqueueWriteBuffer(targetBuffer, true, 0, len(targetHash), []byte(targetHash), nil, nil)
 
-	kernel.SetArg(0, wordlistBuffer)
-	kernel.SetArg(1, targetBuffer)
-	kernel.SetArg(2, len(wordlist))
+	kernel.SetArgBuffer(0, wordlistBuffer)
+	kernel.SetArgBuffer(1, targetBuffer)
+	kernel.SetArgInt32(2, int32(len(wordlist)))
 
 	// Run kernel
-	queue.EnqueueNDRangeKernel(kernel, nil, []int{len(wordlist)}, nil)
+	queue.EnqueueNDRangeKernel(kernel, nil, []int{len(wordlist)}, nil, nil)
 	queue.Finish()
 
 	// Read back result
 	results := make([]byte, 64)
-	queue.EnqueueReadBuffer(targetBuffer, results)
+	queue.EnqueueReadBuffer(targetBuffer, true, 0, 64, results, nil, nil)
 
 	return string(results)
 }
