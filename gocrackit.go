@@ -17,7 +17,7 @@ import (
 	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
-	"github.com/mumax/3cl/opencl"
+	"github.com/jgillich/go-opencl"
 )
 
 // OpenCL Kernel for GPU-based hashing
@@ -78,7 +78,6 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	if err != nil {
 		log.Fatal("Failed to create buffer for wordlist")
 	}
-
 	targetBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(targetHash))
 	if err != nil {
 		log.Fatal("Failed to create buffer for target hash")
