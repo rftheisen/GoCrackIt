@@ -17,7 +17,7 @@ import (
 	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
-	"github.com/intel/opencl-go"
+	"github.com/jgillich/go-opencl"
 )
 
 // OpenCL Kernel for GPU-based hashing
@@ -63,7 +63,7 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	}
 
 	// Execute kernel
-	queue, err := context.CreateCommandQueue(device, nil)
+	queue, err := context.CreateCommandQueue(device)
 	if err != nil {
 		log.Fatal("Failed to create command queue")
 	}
