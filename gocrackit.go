@@ -13,9 +13,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	"crypto/hmac"
 	"encoding/hex"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -28,6 +26,27 @@ import (
 	"golang.org/x/crypto/scrypt"
 )
 
+// hashString hashes the input with the specified algorithm
+func hashString(input, algo string) string {
+	switch algo {
+	case "md5":
+		h := md5.Sum([]byte(input))
+		return hex.EncodeToString(h[:])
+	case "sha1":
+		h := sha1.Sum([]byte(input))
+		return hex.EncodeToString(h[:])
+	case "sha256":
+		h := sha256.Sum256([]byte(input))
+		return hex.EncodeToString(h[:])
+	case "sha512":
+		h := sha512.Sum512([]byte(input))
+		return hex.EncodeToString(h[:])
+	default:
+		log.Fatal("Unsupported hash algorithm")
+	}
+	return ""
+}
+
 // GPU-accelerated hash function using OpenCL with CGO
 func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	var platform C.cl_platform_id
@@ -35,7 +54,6 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	var context C.cl_context
 	var queue C.cl_command_queue
 	var program C.cl_program
-	var kernel C.cl_kernel
 	var err C.cl_int
 
 	// Get Platform
@@ -57,10 +75,11 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	}
 
 	// Create Command Queue
-	queue = C.clCreateCommandQueue(context, device, 0, &err)
+	queue = C.clCreateCommandQueueWithProperties(context, device, nil, &err)
 	if err != C.CL_SUCCESS {
 		log.Fatal("Failed to create command queue")
 	}
+	_ = queue // Suppress unused variable warning
 
 	// OpenCL kernel source code
 	source := `
@@ -86,11 +105,6 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	err = C.clBuildProgram(program, 1, &device, nil, nil, nil)
 	if err != C.CL_SUCCESS {
 		log.Fatal("Failed to build OpenCL program")
-	}
-
-	kernel = C.clCreateKernel(program, C.CString("hash_md5"), &err)
-	if err != C.CL_SUCCESS {
-		log.Fatal("Failed to create kernel")
 	}
 
 	// GPU processing logic goes here (memory allocation, execution, etc.)
