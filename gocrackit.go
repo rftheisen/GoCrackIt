@@ -1,7 +1,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I/usr/include
+#cgo CFLAGS: -I/usr/include -DCL_TARGET_OPENCL_VERSION=300
 #cgo LDFLAGS: -lOpenCL
 #include <CL/cl.h>
 #include <stdlib.h>
@@ -22,8 +22,6 @@ import (
 	"time"
 	"unsafe"
 	"github.com/fatih/color"
-	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/crypto/scrypt"
 )
 
 // hashString hashes the input with the specified algorithm
