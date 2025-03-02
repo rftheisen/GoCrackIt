@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"crypto/hmac"
 	"encoding/hex"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -16,121 +17,150 @@ import (
 	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
-	"golang.org/x/crypto/md4"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/pbkdf2"
+	"github.com/mumax/3cl/opencl"
 )
 
-// hashString hashes the input with the specified algorithm
-func hashString(input, algo string) string {
-	switch algo {
-	case "md5":
-		h := md5.Sum([]byte(input))
-		return hex.EncodeToString(h[:])
-	case "sha1":
-		h := sha1.Sum([]byte(input))
-		return hex.EncodeToString(h[:])
-	case "sha256":
-		h := sha256.Sum256([]byte(input))
-		return hex.EncodeToString(h[:])
-	case "sha512":
-		h := sha512.Sum512([]byte(input))
-		return hex.EncodeToString(h[:])
-	case "bcrypt":
-		h, err := bcrypt.GenerateFromPassword([]byte(input), bcrypt.DefaultCost)
-		if err != nil {
-			log.Fatal("Error generating bcrypt hash")
-		}
-		return string(h)
-	case "scrypt":
-		h, err := scrypt.Key([]byte(input), []byte("salt"), 16384, 8, 1, 32)
-		if err != nil {
-			log.Fatal("Error generating scrypt hash")
-		}
-		return hex.EncodeToString(h)
-	case "hmac-sha256":
-		key := []byte("secret-key")
-		h := hmac.New(sha256.New, key)
-		h.Write([]byte(input))
-		return hex.EncodeToString(h.Sum(nil))
-	case "ntlm":
-		h := md4.New()
-		h.Write([]byte(input))
-		return hex.EncodeToString(h.Sum(nil))
-	case "sha512-crypt":
-		h, err := ssh.NewSignerFromKey([]byte(input))
-		if err != nil {
-			log.Fatal("Error generating sha512-crypt hash")
-		}
-		return hex.EncodeToString(h.PublicKey().Marshal())
-	case "argon2id":
-		h := argon2.IDKey([]byte(input), []byte("salt"), 1, 64*1024, 4, 32)
-		return hex.EncodeToString(h)
-	case "pbkdf2-sha256":
-		h := pbkdf2.Key([]byte(input), []byte("salt"), 4096, 32, sha256.New)
-		return hex.EncodeToString(h)
-	case "pbkdf2-sha512":
-		h := pbkdf2.Key([]byte(input), []byte("salt"), 4096, 64, sha512.New)
-		return hex.EncodeToString(h)
-	default:
-		log.Fatal("Unsupported hash algorithm")
+// OpenCL Kernel for GPU-based hashing
+const openCLKernel = `
+__kernel void hash_md5(__global char* passwords, __global char* hashes, int count) {
+    int id = get_global_id(0);
+    if (id < count) {
+        char hash[16];
+        md5(passwords[id], hash);
+        if (memcmp(hash, hashes, 16) == 0) {
+            // Password matched, return result
+        }
+    }
+}`
+
+// GPU-accelerated hash function using OpenCL
+func hashWithGPU(wordlist []string, targetHash string, algo string) string {
+	platforms, err := opencl.GetPlatforms()
+	if err != nil || len(platforms) == 0 {
+		log.Fatal("No OpenCL platforms found")
 	}
-	return ""
+
+	// Select the first available platform
+	platform := platforms[0]
+	devices, err := platform.GetDevices(opencl.DeviceTypeGPU)
+	if err != nil || len(devices) == 0 {
+		log.Fatal("No OpenCL GPU devices found")
+	}
+
+	device := devices[0]
+	context, err := opencl.CreateContext([]*opencl.Device{device})
+	if err != nil {
+		log.Fatal("Failed to create OpenCL context")
+	}
+	source := openCLKernel
+	program, err := context.CreateProgramWithSource([]string{source})
+	if err != nil {
+		log.Fatal("Failed to create OpenCL program")
+	}
+
+	if err := program.Build(); err != nil {
+		log.Fatal("Failed to build OpenCL program")
+	}
+
+	// Execute kernel
+	queue, err := context.CreateCommandQueue(device)
+	if err != nil {
+		log.Fatal("Failed to create command queue")
+	}
+
+	kernel, err := program.CreateKernel("hash_md5")
+	if err != nil {
+		log.Fatal("Failed to create kernel")
+	}
+
+	// Load wordlist into GPU memory
+	wordlistBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(wordlist)*64) // Max word length assumed to be 64
+	if err != nil {
+		log.Fatal("Failed to create buffer for wordlist")
+	}
+
+	targetBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(targetHash))
+	if err != nil {
+		log.Fatal("Failed to create buffer for target hash")
+	}
+
+	// Copy data to GPU
+	queue.EnqueueWriteBuffer(wordlistBuffer, wordlist)
+	queue.EnqueueWriteBuffer(targetBuffer, []byte(targetHash))
+
+	kernel.SetArg(0, wordlistBuffer)
+	kernel.SetArg(1, targetBuffer)
+	kernel.SetArg(2, len(wordlist))
+
+	// Run kernel
+	queue.EnqueueNDRangeKernel(kernel, nil, []int{len(wordlist)}, nil)
+	queue.Finish()
+
+	// Read back result
+	results := make([]byte, 64)
+	queue.EnqueueReadBuffer(targetBuffer, results)
+
+	return string(results)
 }
 
-// crackHash attempts to find the plaintext corresponding to the hash
-func crackHash(hash, algo, wordlistPath string) {
+// crackHash attempts to find the plaintext using CPU or GPU
+func crackHash(hash, algo, wordlistPath string, useGPU bool) {
 	data, err := ioutil.ReadFile(wordlistPath)
 	if err != nil {
 		log.Fatalf("Failed to read wordlist: %v", err)
 	}
 
 	words := strings.Split(string(data), "\n")
-	var wg sync.WaitGroup
-	found := make(chan string, 1) // Channel to signal when a match is found
-
-	color.Cyan("[+] Starting hash cracking...")
-	tStart := time.Now()
-
-	for _, word := range words {
-		wg.Add(1)
-		go func(w string) {
-			defer wg.Done()
-			w = strings.TrimSpace(w)
-			if hashString(w, algo) == hash {
-				found <- w
-			}
-		}(word)
-	}
-
-	// Wait for completion
-	go func() {
-		wg.Wait()
-		close(found)
-	}()
-
-	// Check for results
-	if result, ok := <-found; ok {
-		color.Green("[✔] Hash cracked: %s", result)
+	if useGPU {
+		result := hashWithGPU(words, hash, algo)
+		if result != "" {
+			color.Green("[✔] Hash cracked: %s", result)
+		} else {
+			color.Red("[-] No match found")
+		}
 	} else {
-		color.Red("[-] No match found")
-	}
+		var wg sync.WaitGroup
+		found := make(chan string, 1)
+		color.Cyan("[+] Starting CPU-based hash cracking...")
+		tStart := time.Now()
 
-	tElapsed := time.Since(tStart)
-	color.Yellow("[*] Cracking completed in %s", tElapsed)
+		for _, word := range words {
+			wg.Add(1)
+			go func(w string) {
+				defer wg.Done()
+				w = strings.TrimSpace(w)
+				if hashString(w, algo) == hash {
+					found <- w
+				}
+			}(word)
+		}
+
+		go func() {
+			wg.Wait()
+			close(found)
+		}()
+
+		if result, ok := <-found; ok {
+			color.Green("[✔] Hash cracked: %s", result)
+		} else {
+			color.Red("[-] No match found")
+		}
+		tElapsed := time.Since(tStart)
+		color.Yellow("[*] Cracking completed in %s", tElapsed)
+	}
 }
 
 func main() {
-	if len(os.Args) != 4 {
-		color.Red("Usage: go run gocrackit.go <hash> <algorithm> <wordlist>")
-		color.Yellow("Supported algorithms: md5, sha1, sha256, sha512, bcrypt, scrypt, hmac-sha256, ntlm, sha512-crypt, argon2id, pbkdf2-sha256, pbkdf2-sha512")
+	if len(os.Args) != 5 {
+		color.Red("Usage: go run gocrackit.go <hash> <algorithm> <wordlist> <gpu|cpu>")
 		os.Exit(1)
 	}
 
 	hash := os.Args[1]
 	algo := strings.ToLower(os.Args[2])
 	wordlist := os.Args[3]
+	mode := strings.ToLower(os.Args[4])
 
-	crackHash(hash, algo, wordlist)
+	useGPU := mode == "gpu"
+	crackHash(hash, algo, wordlist, useGPU)
 }
