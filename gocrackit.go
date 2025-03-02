@@ -17,7 +17,7 @@ import (
 	"github.com/fatih/color"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/scrypt"
-	"github.com/go-opencl/cl"
+	"github.com/intel/opencl-go"
 )
 
 // OpenCL Kernel for GPU-based hashing
@@ -35,20 +35,20 @@ __kernel void hash_md5(__global char* passwords, __global char* hashes, int coun
 
 // GPU-accelerated hash function using OpenCL
 func hashWithGPU(wordlist []string, targetHash string, algo string) string {
-	platforms, err := cl.GetPlatforms()
+	platforms, err := opencl.GetPlatforms()
 	if err != nil || len(platforms) == 0 {
 		log.Fatal("No OpenCL platforms found")
 	}
 
 	// Select the first available platform
 	platform := platforms[0]
-	devices, err := platform.GetDevices(cl.DeviceTypeGPU)
+	devices, err := platform.GetDevices(opencl.DeviceTypeGPU)
 	if err != nil || len(devices) == 0 {
 		log.Fatal("No OpenCL GPU devices found")
 	}
 
 	device := devices[0]
-	context, err := cl.CreateContext([]*cl.Device{device})
+	context, err := opencl.CreateContext([]*opencl.Device{device})
 	if err != nil {
 		log.Fatal("Failed to create OpenCL context")
 	}
@@ -74,11 +74,11 @@ func hashWithGPU(wordlist []string, targetHash string, algo string) string {
 	}
 
 	// Load wordlist into GPU memory
-	wordlistBuffer, err := context.CreateBuffer(cl.MemReadOnly, len(wordlist)*64, nil) // Max word length assumed to be 64
+	wordlistBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(wordlist)*64, nil) // Max word length assumed to be 64
 	if err != nil {
 		log.Fatal("Failed to create buffer for wordlist")
 	}
-	targetBuffer, err := context.CreateBuffer(cl.MemReadOnly, len(targetHash), nil)
+	targetBuffer, err := context.CreateBuffer(opencl.MemReadOnly, len(targetHash), nil)
 	if err != nil {
 		log.Fatal("Failed to create buffer for target hash")
 	}
